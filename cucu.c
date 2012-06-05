@@ -79,6 +79,24 @@ void readtok() {
 	tok[tokpos] = '\0';
 }
 
+int peek(char *s) {
+	return (strcmp(tok, s) == 0);
+}
+
+int accept(char *s) {
+	if (peek(s)) {
+		readtok();
+		return 1;
+	}
+	return 0;
+}
+
+int expect(char *s) {
+	if (accept(s) == 0) {
+		error("Error: expected '%s'\n", s);
+	}
+}
+
 /*
  * LEXER AND COMPILER
  */
