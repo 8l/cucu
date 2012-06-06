@@ -100,6 +100,35 @@ void expect(char *s) {
 }
 
 /*
+ * SYMBOLS
+ */
+#define MAXSYMBOLS 4096
+static struct sym {
+	char type;
+	int addr;
+	char name[MAXTOKSZ];
+} sym[MAXSYMBOLS];
+static int sympos = 0;
+
+static struct sym *sym_find(char *s) {
+	int i;
+	struct sym *symbol;
+	for (i = 0; i < sympos; i++) {
+		if (strcmp(sym[i].name, s) == 0) {
+			symbol = &sym[i];
+		}
+	}
+	return symbol;
+}
+
+static void sym_declare(char *name, char type, int addr) {
+	strncpy(sym[sympos].name, name, MAXTOKSZ);
+	sym[sympos].addr = addr;
+	sym[sympos].type = type;
+	sympos++;
+}
+
+/*
  * PARSER AND COMPILER
  */
 
@@ -258,7 +287,7 @@ static void compile() {
 		if (accept(";")) {
 			DEBUG("variable definition\n");
 			continue;
-		} 
+		}
 		expect("(");
 		int argc = 0;
 		for (;;) {
