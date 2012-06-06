@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <string.h>
 
 static void error(const char *fmt, ...) {
 	va_list args;
@@ -12,21 +13,22 @@ static void error(const char *fmt, ...) {
 	exit(1);
 }
 
+#define DEBUG(...) fprintf(stderr, __VA_ARGS__)
+
 #define MAXTOKSZ 256
 
 /*
- * TOKENIZER
+ * LEXER
  */
 static FILE *f;
 static char tok[MAXTOKSZ];
-static int toksz;
-static int nextc;
 static int tokpos;
+static int nextc;
 
 void readchr() {
 	if (tokpos == MAXTOKSZ - 1) {
 		tok[tokpos] = '\0';
-		error("Token too long: %s", tok);
+		error("Token too long: %s\n", tok);
 	}
 	tok[tokpos++] = nextc;
 	nextc = fgetc(f);
@@ -91,19 +93,189 @@ int accept(char *s) {
 	return 0;
 }
 
-int expect(char *s) {
+void expect(char *s) {
 	if (accept(s) == 0) {
-		error("Error: expected '%s'\n", s);
+		error("Error: expected '%s', but found: %s\n", s, tok);
 	}
 }
 
 /*
- * LEXER AND COMPILER
+ * PARSER AND COMPILER
  */
-void compile() {
-	while (tok[0] != 0) {
-		fprintf(stderr, "TOKEN: %s\n", tok);
+
+static void expr();
+
+/* read type name: int, char and pointers are supported */
+static int typename() {
+	if (peek("int") || peek("char")) {
 		readtok();
+		while (accept("*"));
+		return 1;
+	}
+	return 0;
+}
+
+static void prim_expr() {
+	if (isdigit(tok[0])) {
+		DEBUG(" const-%s ", tok);
+	} else if (isalpha(tok[0])) {
+		DEBUG(" var-%s ", tok);
+	} else if (accept("(")) {
+		expr();
+		expect(")");
+	} else {
+		error("Unexpected primary expression: %s\n", tok);
+	}
+	readtok();
+}
+
+static void postfix_expr() {
+	prim_expr();
+	if (accept("[")) {
+		expr();
+		expect("]");
+		DEBUG(" [] ");
+	} else if (accept("(")) {
+		if (accept(")") == 0) {
+			expr();
+			DEBUG(" FUNC-ARG\n");
+			while (accept(",")) {
+				expr();
+				DEBUG(" FUNC-ARG\n");
+			}
+			expect(")");
+		}
+		DEBUG(" FUNC-CALL\n");
+	}
+}
+
+static void add_expr() {
+	postfix_expr();
+	while (peek("+") || peek("-")) {
+		if (accept("+")) {
+			postfix_expr();
+			DEBUG(" + ");
+		} else if (accept("-")) {
+			postfix_expr();
+			DEBUG(" - ");
+		}
+	}
+}
+
+static void shift_expr() {
+	add_expr();
+	while (peek("<<") || peek(">>")) {
+		if (accept("<<")) {
+			add_expr();
+			DEBUG(" << ");
+		} else if (accept(">>")) {
+			add_expr();
+			DEBUG(" >> ");
+		}
+	}
+}
+
+static void rel_expr() {
+	shift_expr();
+	while (peek("<")) {
+		if (accept("<")) {
+			shift_expr();
+			DEBUG(" < ");
+		}
+	}
+}
+
+static void eq_expr() {
+	rel_expr();
+	while (peek("==") || peek("!=")) {
+		if (accept("==")) {
+			rel_expr();
+			DEBUG(" == ");
+		} else if (accept("!=")) {
+			rel_expr();
+			DEBUG("!=");
+		}
+	}
+}
+
+static void bitwise_expr() {
+	eq_expr();
+	while (peek("|") || peek("&")) {
+		if (accept("|")) {
+			eq_expr();
+			DEBUG(" OR ");
+		} else if (accept("&")) {
+			eq_expr();
+			DEBUG(" AND ");
+		}
+	}
+}
+
+static void expr() {
+	bitwise_expr();
+	if (accept("=")) {
+		expr();
+		DEBUG(" := ");
+	}
+}
+
+static void statement() {
+	if (accept("{")) {
+		while (accept("}") == 0) {
+			statement();
+		}
+	} else if (typename()) {
+		DEBUG("local variable: %s\n", tok);
+		readtok();
+		if (accept("=")) {
+			expr();
+			DEBUG(" :=\n");
+		}
+		expect(";");
+	} else if (accept("if")) {
+		/* TODO */
+	} else if (accept("while")) {
+		/* TODO */
+	} else if (accept("return")) {
+		if (peek(";") == 0) {
+			expr();
+		}
+		expect(";");
+		DEBUG("RET\n");
+	} else {
+		expr();
+		expect(";");
+	}
+}
+
+static void compile() {
+	while (tok[0] != 0) { /* until EOF */
+		if (typename() == 0) {
+			error("Error: type name expected\n");
+		}
+		DEBUG("identifier: %s\n", tok);
+		readtok();
+		if (accept(";")) {
+			DEBUG("variable definition\n");
+			continue;
+		} 
+		expect("(");
+		int argc = 0;
+		for (;;) {
+			argc++;
+			typename();
+			DEBUG("function argument: %s\n", tok);
+			readtok();
+			if (peek(")")) {
+				break;
+			}
+			expect(",");
+		}
+		expect(")");
+		if (accept(";") == 0) {
+			DEBUG("function body\n");
+			statement();
+		}
 	}
 }
 

@@ -1,4 +1,4 @@
-CFLAGS := -Wall -W -g
+CFLAGS := -Wall -W -g -std=c89
 
 cucu: cucu.o
 	$(CC) $^ -o $@
