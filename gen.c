@@ -17,19 +17,35 @@
 #define GEN_LESS  "pop B  \nA:=B<A \n"
 #define GEN_LESSSZ strlen(GEN_LESS)
 
+#define GEN_EQ "pop B  \nA:=B==A\n"
+#define GEN_EQSZ strlen(GEN_EQ)
+#define GEN_NEQ  "pop B  \nA:=B!=A\n"
+#define GEN_NEQSZ strlen(GEN_NEQ)
+
+#define GEN_OR "pop B  \nA:=B|A \n"
+#define GEN_ORSZ strlen(GEN_OR)
+#define GEN_AND  "pop B  \nA:=B&A \n"
+#define GEN_ANDSZ strlen(GEN_AND)
+
 #define GEN_ASSIGN "pop B  \nM[B]:=A\n"
 #define GEN_ASSIGNSZ strlen(GEN_ASSIGN)
 #define GEN_ASSIGN8 "pop B  \nm[B]:=A\n"
 #define GEN_ASSIGN8SZ strlen(GEN_ASSIGN)
+
+#define GEN_JMP "jmp....\n"
+#define GEN_JMPSZ strlen(GEN_JMP)
+
+#define GEN_JZ "jmz....\n"
+#define GEN_JZSZ strlen(GEN_JZ)
 
 static void gen_start() {
 	emits("jmpCAFE\n");
 }
 
 static void gen_finish() {
-	struct sym *main = sym_find("main");
+	struct sym *funcmain = sym_find("main");
 	char s[32];
-	sprintf(s, "%04x", main->addr);
+	sprintf(s, "%04x", funcmain->addr);
 	memcpy(code+3, s, 4);
 	printf("%s", code);
 }
@@ -66,9 +82,9 @@ static void gen_stack_addr(int addr) {
 }
 
 static void gen_unref(int type) {
-	if (type == TYPE_VAR) {
+	if (type == TYPE_INTVAR) {
 		emits("A:=M[A]\n");
-	} else if (type == TYPE_CHAR) {
+	} else if (type == TYPE_CHARVAR) {
 		emits("A:=m[A]\n");
 	}
 }
@@ -77,4 +93,10 @@ static void gen_call() {
 	emits("call A \n");
 	/* no, call doesn't increase current stack size */
 	/*stack_pos = stack_pos + 1;*/
+}
+
+static void gen_patch(uint8_t *op, int value) {
+	char s[32];
+	sprintf(s, "%04x", value);
+	memcpy(op-5, s, 4);
 }

@@ -59,6 +59,7 @@ void readtok() {
 				while (nextc != c) {
 					readchr();
 				}
+				readchr();
 			} else if (nextc == '/') { /* skip comments */
 				readchr();
 				if (nextc == '*') {
@@ -145,8 +146,8 @@ static void emit(void *buf, size_t len) {
 }
 
 #define TYPE_NUM  0
-#define TYPE_CHAR 1
-#define TYPE_VAR  2
+#define TYPE_CHARVAR 1
+#define TYPE_INTVAR  2
 
 #include "gen.c"
 
@@ -169,7 +170,7 @@ static int typename() {
 static int prim_expr() {
 	int type = TYPE_NUM;
 	if (isdigit(tok[0])) {
-		int n = strtol(tok, NULL, 10);
+		int n = strtol(tok, NULL, 10); /* TODO: parse 0x.. */
 		gen_const(n);
 	} else if (isalpha(tok[0])) {
 		struct sym *s = sym_find(tok);
@@ -181,10 +182,36 @@ static int prim_expr() {
 		} else {
 			gen_const(s->addr);
 		}
-		type = TYPE_VAR;
+		type = TYPE_INTVAR;
 	} else if (accept("(")) {
 		type = expr();
 		expect(")");
+	} else if (tok[0] == '"') {
+		int i, j;
+		i = 0; j = 1;
+		while (tok[j] != '"') {
+			if (tok[j] == '\\' && tok[j+1] == 'x') {
+				char s[3] = {tok[j+2], tok[j+3], 0};
+				uint8_t n = strtol(s, NULL, 16);
+				tok[i++] = n;
+				j += 4;
+			} else {
+				tok[i++] = tok[j++];
+			}
+		}
+		tok[i] = 0;
+		if (i % 2 == 0) {
+			i++;
+			tok[i] = 0;
+		}
+		/* put token on stack */
+		for (; i >= 0; i-=2) {
+			gen_const((tok[i] << 8 | tok[i-1]));
+			gen_push();
+		}
+		/* put token address on stack */
+		gen_stack_addr(0);
+		type = TYPE_NUM;
 	} else {
 		error("Unexpected primary expression: %s\n", tok);
 	}
@@ -208,10 +235,10 @@ static int binary(int type, int (*f)(), char *buf, size_t len) {
 
 static int postfix_expr() {
 	int type = prim_expr();
-	if (type == TYPE_VAR && accept("[")) {
-		binary(TYPE_NUM, expr, GEN_ADD, GEN_ADDSZ);
+	if (type == TYPE_INTVAR && accept("[")) {
+		binary(type, expr, GEN_ADD, GEN_ADDSZ);
 		expect("]");
-		type = TYPE_CHAR;
+		type = TYPE_CHARVAR;
 	} else if (accept("(")) {
 		int prev_stack_pos = stack_pos;
 		gen_push(); /* store function address */
@@ -227,7 +254,7 @@ static int postfix_expr() {
 		}
 		type = TYPE_NUM;
 		gen_stack_addr(stack_pos - call_addr - 1);
-		gen_unref(TYPE_VAR);
+		gen_unref(TYPE_INTVAR);
 		gen_call();
 		/* remove function address and args */
 		gen_pop(stack_pos - prev_stack_pos);
@@ -252,10 +279,8 @@ static int shift_expr() {
 	int type = add_expr();
 	while (peek("<<") || peek(">>")) {
 		if (accept("<<")) {
-			add_expr();
 			type = binary(type, add_expr, GEN_SHL, GEN_SHLSZ);
 		} else if (accept(">>")) {
-			add_expr();
 			type = binary(type, add_expr, GEN_SHR, GEN_SHRSZ);
 		}
 	}
@@ -266,7 +291,6 @@ static int rel_expr() {
 	int type = shift_expr();
 	while (peek("<")) {
 		if (accept("<")) {
-			shift_expr();
 			type = binary(type, shift_expr, GEN_LESS, GEN_LESSSZ);
 		}
 	}
@@ -276,13 +300,10 @@ static int rel_expr() {
 static int eq_expr() {
 	int type = rel_expr();
 	while (peek("==") || peek("!=")) {
-		type = TYPE_NUM;
 		if (accept("==")) {
-			rel_expr();
-			DEBUG(" == ");
+			type = binary(type, rel_expr, GEN_EQ, GEN_EQSZ);
 		} else if (accept("!=")) {
-			rel_expr();
-			DEBUG("!=");
+			type = binary(type, rel_expr, GEN_NEQ, GEN_NEQSZ);
 		}
 	}
 	return type;
@@ -291,13 +312,10 @@ static int eq_expr() {
 static int bitwise_expr() {
 	int type = eq_expr();
 	while (peek("|") || peek("&")) {
-		type = TYPE_NUM;
 		if (accept("|")) {
-			eq_expr();
-			DEBUG(" OR ");
+			type = binary(type, eq_expr, GEN_OR, GEN_ORSZ);
 		} else if (accept("&")) {
-			eq_expr();
-			DEBUG(" AND ");
+			type = binary(type, eq_expr, GEN_AND, GEN_ANDSZ);
 		}
 	}
 	return type;
@@ -308,7 +326,12 @@ static int expr() {
 	/*DEBUG("type: %d\n", type);*/
 	if (type != TYPE_NUM) {
 		if (accept("=")) {
-			gen_push(); expr(); emits(GEN_ASSIGN);
+			gen_push(); expr(); 
+			if (type == TYPE_INTVAR) {
+				emit(GEN_ASSIGN, GEN_ASSIGNSZ);
+			} else {
+				emit(GEN_ASSIGN8, GEN_ASSIGN8SZ);
+			}
 			stack_pos = stack_pos - 1; /* assume ASSIGN contains pop */
 			type = TYPE_NUM;
 		} else {
@@ -328,17 +351,42 @@ static void statement() {
 		stack_pos = prev_stack_pos;
 		/* TODO: remove locals */
 	} else if (typename()) {
-		sym_declare(tok, 'L', stack_pos);
+		struct sym *var = sym_declare(tok, 'L', stack_pos);
 		readtok();
 		if (accept("=")) {
-			expr(); /* assume that expr() leave stack on the save level */
+			expr();
 		}
 		gen_push(); /* make room for new local variable */
+		var->addr = stack_pos-1;
 		expect(";");
 	} else if (accept("if")) {
-		/* TODO */
+		expect("(");
+		expr();
+		emit(GEN_JZ, GEN_JZSZ);
+		int p1 = codepos;
+		expect(")");
+		int prev_stack_pos = stack_pos;
+		statement();
+		emit(GEN_JMP, GEN_JMPSZ);
+		int p2 = codepos;
+		gen_patch(code + p1, codepos);
+		if (accept("else")) {
+			stack_pos = prev_stack_pos;
+			statement();
+		}
+		stack_pos = prev_stack_pos;
+		gen_patch(code + p2, codepos);
 	} else if (accept("while")) {
-		/* TODO */
+		expect("(");
+		int p1 = codepos;
+		expr();
+		emit(GEN_JZ, GEN_JZSZ);
+		int p2 = codepos;
+		expect(")");
+		statement();
+		emit(GEN_JMP, GEN_JMPSZ);
+		gen_patch(code + codepos, p1);
+		gen_patch(code + p2, codepos);
 	} else if (accept("return")) {
 		if (peek(";") == 0) {
 			expr();

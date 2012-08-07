@@ -9,4 +9,7 @@ clean:
 	rm -f cucu
 	rm -f cucu.o
 
-.PHONY: cucu
+test:
+	python test.py
+
+.PHONY: cucu test
