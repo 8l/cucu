@@ -108,6 +108,7 @@ static struct sym {
 	char type;
 	int addr;
 	char name[MAXTOKSZ];
+	void *arg;
 } sym[MAXSYMBOLS];
 static int sympos = 0;
 
@@ -149,7 +150,11 @@ static void emit(void *buf, size_t len) {
 #define TYPE_CHARVAR 1
 #define TYPE_INTVAR  2
 
+#ifdef GEN
+#include GEN
+#else
 #include "gen.c"
+#endif
 
 /*
  * PARSER AND COMPILER
@@ -180,7 +185,7 @@ static int prim_expr() {
 		if (s->type == 'L') {
 			gen_stack_addr(stack_pos - s->addr - 1);
 		} else {
-			gen_const(s->addr);
+			gen_label_addr(s);
 		}
 		type = TYPE_INTVAR;
 	} else if (accept("(")) {
@@ -204,13 +209,7 @@ static int prim_expr() {
 			i++;
 			tok[i] = 0;
 		}
-		/* put token on stack */
-		for (; i >= 0; i-=2) {
-			gen_const((tok[i] << 8 | tok[i-1]));
-			gen_push();
-		}
-		/* put token address on stack */
-		gen_stack_addr(0);
+		gen_array(tok, i);
 		type = TYPE_NUM;
 	} else {
 		error("Unexpected primary expression: %s\n", tok);
@@ -379,6 +378,7 @@ static void statement() {
 	} else if (accept("while")) {
 		expect("(");
 		int p1 = codepos;
+		gen_label(NULL);
 		expr();
 		emit(GEN_JZ, GEN_JZSZ);
 		int p2 = codepos;
@@ -410,8 +410,11 @@ static void compile() {
 		readtok();
 		if (accept(";")) {
 			mem_pos = mem_pos + TYPE_NUM_SIZE;
+			var->type = 'G';
 			continue;
 		}
+		var->type = 'F';
+		gen_label(var->name);
 		expect("(");
 		int argc = 0;
 		for (;;) {
