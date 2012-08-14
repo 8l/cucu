@@ -150,11 +150,11 @@ static void emit(void *buf, size_t len) {
 #define TYPE_CHARVAR 1
 #define TYPE_INTVAR  2
 
-#ifdef GEN
-#include GEN
-#else
-#include "gen.c"
+#ifndef GEN
+#error "A code generator (backend) must be provided (use -DGEN=...)"
 #endif
+
+#include GEN
 
 /*
  * PARSER AND COMPILER
