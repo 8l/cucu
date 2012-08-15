@@ -13,13 +13,10 @@ static void error(const char *fmt, ...) {
 	exit(1);
 }
 
-#define DEBUG(...) fprintf(stderr, __VA_ARGS__)
-
-#define MAXTOKSZ 256
-
 /*
  * LEXER
  */
+#define MAXTOKSZ 256
 static FILE *f;
 static char tok[MAXTOKSZ];
 static int tokpos;
@@ -108,12 +105,10 @@ static struct sym {
 	char type;
 	int addr;
 	char name[MAXTOKSZ];
-	void *arg;
 } sym[MAXSYMBOLS];
 static int sympos = 0;
 
 int stack_pos = 0;
-int mem_pos = 0;
 
 static struct sym *sym_find(char *s) {
 	int i;
@@ -131,6 +126,9 @@ static struct sym *sym_declare(char *name, char type, int addr) {
 	sym[sympos].addr = addr;
 	sym[sympos].type = type;
 	sympos++;
+	if (sympos > MAXSYMBOLS) {
+		error("Too many symbols\n");
+	}
 	return &sym[sympos-1];
 }
 
@@ -185,7 +183,7 @@ static int prim_expr() {
 		if (s->type == 'L') {
 			gen_stack_addr(stack_pos - s->addr - 1);
 		} else {
-			gen_label_addr(s);
+			gen_sym_addr(s);
 		}
 		type = TYPE_INTVAR;
 	} else if (accept("(")) {
@@ -322,7 +320,6 @@ static int bitwise_expr() {
 
 static int expr() {
 	int type = bitwise_expr();
-	/*DEBUG("type: %d\n", type);*/
 	if (type != TYPE_NUM) {
 		if (accept("=")) {
 			gen_push(); expr(); 
@@ -348,7 +345,6 @@ static void statement() {
 		}
 		gen_pop(stack_pos-prev_stack_pos);
 		stack_pos = prev_stack_pos;
-		/* TODO: remove locals */
 	} else if (typename()) {
 		struct sym *var = sym_declare(tok, 'L', stack_pos);
 		readtok();
@@ -378,7 +374,7 @@ static void statement() {
 	} else if (accept("while")) {
 		expect("(");
 		int p1 = codepos;
-		gen_label(NULL);
+		gen_loop_start();
 		expr();
 		emit(GEN_JZ, GEN_JZSZ);
 		int p2 = codepos;
@@ -405,16 +401,13 @@ static void compile() {
 		if (typename() == 0) {
 			error("Error: type name expected\n");
 		}
-		/*DEBUG("new symbol: %s\n", tok);*/
-		struct sym *var = sym_declare(tok, 'U', mem_pos);
+		struct sym *var = sym_declare(tok, 'U', 0);
 		readtok();
 		if (accept(";")) {
-			mem_pos = mem_pos + TYPE_NUM_SIZE;
 			var->type = 'G';
+			gen_sym(var);
 			continue;
 		}
-		var->type = 'F';
-		gen_label(var->name);
 		expect("(");
 		int argc = 0;
 		for (;;) {
@@ -433,8 +426,10 @@ static void compile() {
 		if (accept(";") == 0) {
 			stack_pos = 0;
 			var->addr = codepos;
+			var->type = 'F';
+			gen_sym(var);
 			statement(); /* function body */
-			gen_ret(); /* another ret is user forgets to put 'return' */
+			gen_ret(); /* another ret if user forgets to put 'return' */
 		}
 	}
 }
