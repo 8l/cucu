@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <string.h>
 
+/* print fatal error message and exit */
 static void error(const char *fmt, ...) {
 	va_list args;
 	va_start(args, fmt);
@@ -17,11 +18,12 @@ static void error(const char *fmt, ...) {
  * LEXER
  */
 #define MAXTOKSZ 256
-static FILE *f;
-static char tok[MAXTOKSZ];
-static int tokpos;
-static int nextc;
+static FILE *f;            /* input source file */
+static char tok[MAXTOKSZ]; /* current token */
+static int tokpos;         /* offset inside the current token */
+static int nextc;          /* next char to be pushed into token */
 
+/* read next char */
 void readchr() {
 	if (tokpos == MAXTOKSZ - 1) {
 		tok[tokpos] = '\0';
@@ -31,6 +33,7 @@ void readchr() {
 	nextc = fgetc(f);
 }
 
+/* read single token */
 void readtok() {
 	for (;;) {
 		/* skip spaces */
@@ -49,7 +52,9 @@ void readtok() {
 				readchr();
 			}
 		}
+		/* if it's not special chars that looks like an operator */
 		if (tokpos == 0) {
+			/* try strings and chars inside quotes */
 			if (nextc == '\'' || nextc == '"') {
 				char c = nextc;
 				readchr();
@@ -71,6 +76,7 @@ void readtok() {
 					continue;
 				}
 			} else if (nextc != EOF) {
+				/* otherwise it looks like a single-char symbol, like '+', '-' etc */
 				readchr();
 			}
 		}
@@ -79,10 +85,12 @@ void readtok() {
 	tok[tokpos] = '\0';
 }
 
+/* check if the current token machtes the string */
 int peek(char *s) {
 	return (strcmp(tok, s) == 0);
 }
 
+/* read the next token if the current token machtes the string */
 int accept(char *s) {
 	if (peek(s)) {
 		readtok();
@@ -91,6 +99,7 @@ int accept(char *s) {
 	return 0;
 }
 
+/* throw fatal error if the current token doesn't match the string */
 void expect(char *s) {
 	if (accept(s) == 0) {
 		error("Error: expected '%s', but found: %s\n", s, tok);
